@@ -1,0 +1,242 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Ruota della Fortuna — Demo Vivace con Suoni</title>
+<style>
+  body { font-family: sans-serif; display:flex; flex-direction:column;
+         align-items:center; padding:20px; background:#1a1a1a; color:white; }
+
+  #container { position:relative; width:480px; height:480px; }
+
+  canvas { width:100%; height:100%; }
+
+  #spinBtn {
+    position:absolute;
+    left:50%; top:50%;
+    transform:translate(-50%, -50%);
+    padding:16px 22px;
+    font-size:18px; font-weight:700;
+    background:#ff3d00; color:white;
+    border:none; border-radius:50px;
+    cursor:pointer;
+    box-shadow:0 6px 14px rgba(0,0,0,0.25);
+  }
+
+  #spinBtn:active { transform:translate(-50%, -50%) scale(0.96); }
+
+  .controls {
+    margin-top:22px; max-width:460px;
+    background:#111; padding:14px;
+    border-radius:12px; box-shadow:0 5px 15px rgba(0,0,0,0.3);
+    font-size:14px;
+    color:white;
+  }
+
+  label { font-weight:600; }
+  input, select { padding:6px 8px; margin-top:6px; border-radius:8px; border:none; }
+  select { background:#222; color:white; }
+  input { background:#222; color:white; }
+
+  .banner { background:#ef4444; color:white; padding:6px 10px; border-radius:6px; margin-left:10px; }
+</style>
+</head>
+<body>
+
+<h2>Ruota della Fortuna — Demo Vivace con Suoni</h2>
+
+<div id="container">
+  <canvas id="wheel" width="480" height="480"></canvas>
+  <button id="spinBtn">Gira la Ruota</button>
+</div>
+
+<div class="controls">
+  <label>Modalità:</label>
+  <select id="mode">
+    <option value="fair">Fair Random</option>
+    <option value="weighted">Weighted (probabilità)</option>
+    <option value="preset">Experiment (Preset)</option>
+  </select>
+  <span id="experimentBanner" style="display:none;" class="banner">EXPERIMENT MODE</span>
+
+  <br><br>
+  <label>Numero preset (1–20)</label><br>
+  <input id="presetNumber" type="number" min="1" max="20" value="15">
+
+  <br><br>
+  <label>Probabilità (%) — modalità Weighted</label><br>
+  <input id="presetProb" type="number" min="1" max="95" value="40">
+</div>
+
+<br>
+
+<div id="stats">Lanci: 0 — Ultimo risultato: —</div>
+
+<script>
+const canvas = document.getElementById('wheel');
+const ctx = canvas.getContext('2d');
+const size = 480;
+const radius = size*0.45;
+const cx = size/2, cy = size/2;
+const segments = 20;
+const segAngle = 2*Math.PI/segments;
+let angle = 0;
+let spinning = false;
+
+/* Web Audio per suoni */
+const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+function playTick(){
+  const osc = audioCtx.createOscillator();
+  const gain = audioCtx.createGain();
+  osc.connect(gain); gain.connect(audioCtx.destination);
+  osc.frequency.value = 1200;
+  gain.gain.value = 0.1;
+  osc.start();
+  osc.stop(audioCtx.currentTime + 0.05);
+}
+
+function playDing(){
+  const osc = audioCtx.createOscillator();
+  const gain = audioCtx.createGain();
+  osc.connect(gain); gain.connect(audioCtx.destination);
+  osc.frequency.value = 880;
+  gain.gain.value = 0.25;
+  osc.start();
+  osc.stop(audioCtx.currentTime + 0.3);
+}
+
+/* UI */
+const spinBtn = document.getElementById("spinBtn");
+const modeEl = document.getElementById("mode");
+const presetEl = document.getElementById("presetNumber");
+const probEl = document.getElementById("presetProb");
+const statsEl = document.getElementById("stats");
+const banner = document.getElementById("experimentBanner");
+
+let stats = { total:0, last:null };
+
+/* COLORI VIVACI NEON */
+const colors = [
+  "#ff3d00", "#ff9100", "#ffea00", "#00e676", "#00b0ff",
+  "#d500f9", "#ff1744", "#ff6d00", "#ffff00", "#00c853",
+  "#2979ff", "#d500f9", "#f50057", "#ff6d00", "#76ff03",
+  "#00b0ff", "#ff1744", "#ff9100", "#ffea00", "#00e676"
+];
+
+function drawWheel() {
+  ctx.clearRect(0,0,size,size);
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.rotate(angle);
+
+  for (let i=0;i<segments;i++){
+    const a0 = i*segAngle;
+    ctx.beginPath();
+    ctx.moveTo(0,0);
+    ctx.arc(0,0,radius,a0,a0+segAngle);
+    ctx.closePath();
+    ctx.fillStyle = colors[i % colors.length];
+    ctx.fill();
+
+    ctx.save();
+    ctx.rotate(a0 + segAngle/2);
+    ctx.translate(radius*0.70,0);
+    ctx.rotate(Math.PI/2);
+    ctx.font = "bold 18px sans-serif";
+    ctx.textAlign="center";
+    ctx.fillStyle="#ffffff"; // numeri bianchi
+    ctx.fillText(i+1,0,0);
+    ctx.restore();
+  }
+
+  ctx.restore();
+
+  ctx.beginPath();
+  ctx.moveTo(cx+radius+10,cy);
+  ctx.lineTo(cx+radius+40,cy-15);
+  ctx.lineTo(cx+radius+40,cy+15);
+  ctx.closePath();
+  ctx.fillStyle="#ffffff";
+  ctx.fill();
+}
+
+function angleToIndex(a){
+  const normalized = ((-a)%(2*Math.PI)+2*Math.PI)%(2*Math.PI);
+  return Math.floor(normalized/segAngle);
+}
+
+function fairRandom(){ return Math.floor(Math.random()*segments); }
+function weightedRandom(target, prob){
+  const p = prob/100;
+  if(Math.random() < p) return target;
+  while(true){ const r=Math.floor(Math.random()*segments); if(r!==target) return r; }
+}
+
+let lastTickIndex = -1;
+function playTickIfNeeded(){
+  const idx = angleToIndex(angle);
+  if(idx !== lastTickIndex){
+    playTick();
+    lastTickIndex = idx;
+  }
+}
+
+function animateTo(finalAngle, duration){
+  spinning = true;
+  lastTickIndex = -1;
+  const start = performance.now();
+  const startAngle = angle;
+  function easeOut(t){ return 1 - Math.pow(1-t,3); }
+  function frame(now){
+    const t = Math.min(1,(now-start)/duration);
+    const v = easeOut(t);
+    angle = startAngle + (finalAngle - startAngle)*v;
+    drawWheel();
+    playTickIfNeeded();
+    if(t<1) requestAnimationFrame(frame);
+    else finishSpin();
+  }
+  requestAnimationFrame(frame);
+}
+
+function finishSpin(){
+  spinning = false;
+  const result = angleToIndex(angle)+1;
+  playDing();
+  stats.total++;
+  stats.last=result;
+  statsEl.textContent=`Lanci: ${stats.total} — Ultimo risultato: ${stats.last}`;
+}
+
+spinBtn.onclick = () => {
+  if(spinning) return;
+
+  // sblocca audio su browser moderni
+  if(audioCtx.state === 'suspended') audioCtx.resume();
+
+  const mode = modeEl.value;
+  const preset = Math.max(1, Math.min(20, Number(presetEl.value))) - 1;
+  const prob = Number(probEl.value);
+
+  banner.style.display = (mode==="preset") ? "inline-block" : "none";
+
+  let index;
+  if(mode==="fair") index = fairRandom();
+  else if(mode==="weighted") index = weightedRandom(preset, prob);
+  else index = preset;
+
+  const segCenter = (index + 0.5)*segAngle;
+  const turns = 4 + Math.floor(Math.random()*3);
+  const jitter = (Math.random()-0.5)*segAngle*0.1;
+  const finalAngle = -(turns*2*Math.PI + segCenter + jitter);
+
+  animateTo(finalAngle, mi4500);
+};
+
+drawWheel();
+</script>
+
+</body>
+</html>
